@@ -9,16 +9,16 @@ import os
 # from lightly.models.modules import SimCLRProjectionHead
 # from lightly.transforms.simclr_transform import SimCLRTransform
 
-# Read data from CSV file
-file_path = 'data/15minute_data_newyork.csv'  # Update the path accordingly
+
+file_path = 'data/15minute_data_newyork.csv'  
 data = pd.read_csv(file_path)
 
-# Ensure the data types are correct and convert the timestamp to datetime format
+
 data['local_15min'] = pd.to_datetime(data['local_15min'], errors='coerce')
 data['car1'] = pd.to_numeric(data['car1'], errors='coerce')
 data['car2'] = pd.to_numeric(data['car2'], errors='coerce')
 
-# Extract the date part from the timestamp for grouping
+
 data['date'] = data['local_15min'].dt.date
 
 # Plot EV load (sum of car1 and car2) for each HomeID
@@ -29,10 +29,12 @@ num_plots = len(unique_homeids)
 nrows = int(num_plots**0.5)
 ncols = (num_plots + nrows - 1) // nrows
 
+# Calculate the global maximum value for setting a common y-axis limit
+# global_max = (data[['car1', 'car2']].sum(axis=1).max() / 4) * 1.1  # 10% more than the maximum value
+y_min, y_max = -2, 24
+
 fig, axs = plt.subplots(nrows, ncols, figsize=(15, 15), constrained_layout=True)
 fig.suptitle('Daily Sum of EV Load for Each HomeID', fontsize=16)
-
-y_min, y_max = -5, data[['car1', 'car2']].max().sum() / 4 + 5  # Set a common y-axis range
 
 for i, homeid in enumerate(unique_homeids):
     subset = data[data['dataid'] == homeid]
@@ -45,7 +47,7 @@ for i, homeid in enumerate(unique_homeids):
     
     ax = axs[row, col] if num_plots > 1 else axs
     
-    ax.plot(daily_sum.index, (daily_sum['car1'] + daily_sum['car2']) / 4, marker='o', linestyle='-', color='b')
+    ax.plot(daily_sum.index, (daily_sum['car1'] + daily_sum['car2']) / 4, linestyle='-', color='b')
     ax.set_title(f'HomeID: {homeid}', fontsize=12)
     ax.set_xlabel('Date', fontsize=10)
     ax.set_ylabel('EV Load (kWh)', fontsize=10)
