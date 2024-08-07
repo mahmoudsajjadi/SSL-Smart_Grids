@@ -40,17 +40,27 @@ data['car1'] = pd.to_numeric(data['car1'], errors='coerce')
 data['car2'] = pd.to_numeric(data['car2'], errors='coerce')
 data['date'] = data['local_15min'].dt.date
 
-# Prepare data for SSL
-unique_homeids = data['dataid'].unique()
-ssl_data = []
+# Select specific HomeIDs
+home_ids = [1222, 3000, 9053]
 
-for homeid in unique_homeids:
+# Prepare data for SSL
+ssl_data = []
+for homeid in home_ids:
     subset = data[data['dataid'] == homeid]
     daily_sum = subset.groupby('date')[['car1', 'car2']].sum().reset_index()
     ssl_data.append(daily_sum[['car1', 'car2']].values)
 
 ssl_data = np.concatenate(ssl_data, axis=0)
 ssl_data = torch.tensor(ssl_data, dtype=torch.float32)
+
+# Define a percentage of data points to mask
+mask_percentage = 0.2
+num_mask = int(mask_percentage * ssl_data.size(0))
+
+# Create masks
+mask = torch.randperm(ssl_data.size(0))[:num_mask]
+masked_data = ssl_data.clone()
+masked_data[mask] = 0  # Mask the selected data points
 
 # Create SSL Model instance
 model = SSLModel()
@@ -68,7 +78,7 @@ for epoch in range(epochs):
     
     for i in range(0, ssl_data.size(0), batch_size):
         batch_indices = perm[i:i + batch_size]
-        batch_data = ssl_data[batch_indices]
+        batch_data = masked_data[batch_indices]
         
         optimizer.zero_grad()
         
@@ -76,7 +86,7 @@ for epoch in range(epochs):
         output = model(batch_data)
         
         # SSL target
-        target = batch_data  # In self-supervised learning, target is the input itself
+        target = ssl_data[batch_indices]  # Target is the original unmasked data
         
         # Calculate MAE Loss
         loss = mae_loss(output, target)
@@ -95,38 +105,31 @@ print('Training finished.')
 os.makedirs('models', exist_ok=True)
 torch.save(model.state_dict(), 'models/ssl_model.pth')
 
-# Plot EV load (sum of car1 and car2) for each HomeID
-num_plots = len(unique_homeids)
-nrows = int(num_plots ** 0.5)
-ncols = (num_plots + nrows - 1) // nrows
+# Plot EV load and predicted values for each HomeID
+fig, axs = plt.subplots(len(home_ids), 1, figsize=(15, 5*len(home_ids)), constrained_layout=True)
+fig.suptitle('Original and Predicted EV Load for Selected HomeIDs', fontsize=16)
 
-y_min, y_max = -2, 24
-
-fig, axs = plt.subplots(nrows, ncols, figsize=(15, 15), constrained_layout=True)
-fig.suptitle('Daily Sum of EV Load for Each HomeID', fontsize=16)
-
-for i, homeid in enumerate(unique_homeids):
+for i, homeid in enumerate(home_ids):
     subset = data[data['dataid'] == homeid]
-    daily_sum = subset.groupby('date')[['car1', 'car2']].sum()
+    daily_sum = subset.groupby('date')[['car1', 'car2']].sum().reset_index()
     
-    row = i // ncols
-    col = i % ncols
+    original_values = daily_sum[['car1', 'car2']].values
+    original_values = torch.tensor(original_values, dtype=torch.float32)
+    predicted_values = model(original_values).detach().numpy()
     
-    ax = axs[row, col] if num_plots > 1 else axs
+    ax = axs[i]
     
-    ax.plot(daily_sum.index, (daily_sum['car1'] + daily_sum['car2']) / 4, linestyle='-', color='b')
+    ax.plot(daily_sum['date'], (original_values[:, 0] + original_values[:, 1]) / 4, linestyle='-', color='b', label='Original')
+    ax.plot(daily_sum['date'], (predicted_values[:, 0] + predicted_values[:, 1]) / 4, linestyle='--', color='r', label='Predicted')
     ax.set_title(f'HomeID: {homeid}', fontsize=12)
     ax.set_xlabel('Date', fontsize=10)
     ax.set_ylabel('EV Load (kWh)', fontsize=10)
     ax.grid(True)
-    ax.set_ylim(y_min, y_max)
+    ax.legend()
     ax.tick_params(axis='x', rotation=45)
     ax.tick_params(axis='both', which='major', labelsize=10)
 
-for j in range(i + 1, nrows * ncols):
-    fig.delaxes(axs.flatten()[j])
-
 os.makedirs('results', exist_ok=True)
-fig.savefig('results/daily_ev_loads.png', dpi=300, bbox_inches='tight')
+fig.savefig('results/ev_loads_comparison.png', dpi=300, bbox_inches='tight')
 
 plt.show()
