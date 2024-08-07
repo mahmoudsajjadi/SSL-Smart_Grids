@@ -80,7 +80,6 @@ def train_ssl_model(train_data, mask_percentage, epochs, batch_size, learning_ra
 
             # Calculate MAE Loss
             loss = mae_loss(output, target)
-            # print(np.mean(np.abs(target.detach().numpy() - output.detach().numpy())))
 
             # Backward pass and optimization
             loss.backward()
@@ -91,59 +90,64 @@ def train_ssl_model(train_data, mask_percentage, epochs, batch_size, learning_ra
         print(f'Epoch [{epoch + 1}/{epochs}], Loss: {epoch_loss / ((ssl_data.size(0) // batch_size) + 1):.4f}')
 
     print('Training finished.')
-    return model
+    return model, masked_data
 
-# Plot EV load and predicted values for each HomeID
-fig, axs = plt.subplots(len(home_ids), 2, figsize=(20, 5 * len(home_ids)), constrained_layout=True)
-fig.suptitle('Original and Predicted EV Load for Selected HomeIDs', fontsize=16)
+# Plot EV load consumption for each HomeID
+fig, axs = plt.subplots(len(home_ids), 1, figsize=(15, 5 * len(home_ids)), constrained_layout=True)
+fig.suptitle('EV Load Consumption for Selected HomeIDs', fontsize=16)
 
 for i, homeid in enumerate(home_ids):
     subset = data[data['dataid'] == homeid]
     daily_sum = subset.groupby('date')[['car1', 'car2']].sum().reset_index()
 
-    ev_load = (daily_sum['car1'] + daily_sum['car2']) / 4.0 # 4 is to convert to kwh
+    ev_load = (daily_sum['car1'] + daily_sum['car2']) / 4.0  # 4 is to convert to kWh
 
-    # Split the data into training and testing sets
-    split_idx = int(0.8 * len(ev_load))
-    train_data = ev_load[:split_idx].values
-    test_data = ev_load[split_idx:].values
-    test_dates = daily_sum['date'][split_idx:]
-
-    # Train the model
-    model = train_ssl_model(train_data, mask_percentage, epochs, batch_size, learning_rate)
-    
-    # Evaluate the model
-    all_data = torch.tensor(ev_load.values, dtype=torch.float32).unsqueeze(1)
-    predicted_values = model(all_data).detach().numpy()
-    
-    test_data_tensor = torch.tensor(test_data, dtype=torch.float32).unsqueeze(1)
-    predicted_test_values = model(test_data_tensor).detach().numpy()
-
-    # Plot for the whole time series
-    ax = axs[i, 0]
-    ax.plot(daily_sum['date'], ev_load.values, linestyle='-', color='b', label='Original')
-    ax.plot(daily_sum['date'], predicted_values, linestyle='--', color='r', label='Predicted')
-    ax.set_title(f'HomeID: {homeid} - Whole Time Series', fontsize=12)
-    ax.set_xlabel('Date', fontsize=10)
-    ax.set_ylabel('EV Load (kWh)', fontsize=10)
-    ax.grid(True)
-    ax.legend()
-    ax.tick_params(axis='x', rotation=45)
-    ax.tick_params(axis='both', which='major', labelsize=10)
-
-    # Plot for the test data
-    ax = axs[i, 1]
-    ax.plot(test_dates, test_data, linestyle='-', color='b', label='Original')
-    ax.plot(test_dates, predicted_test_values, linestyle='--', color='r', label='Predicted')
-    ax.set_title(f'HomeID: {homeid} - Test Data', fontsize=12)
-    ax.set_xlabel('Date', fontsize=10)
-    ax.set_ylabel('EV Load (kWh)', fontsize=10)
+    # Plot EV load consumption
+    ax = axs[i]
+    ax.plot(daily_sum['date'], ev_load.values, linestyle='-', color='b', linewidth=2, label=f'HomeID: {homeid}')
+    ax.set_title(f'EV Load Consumption for HomeID: {homeid}', fontsize=14)
+    ax.set_xlabel('Date', fontsize=12)
+    ax.set_ylabel('EV Load (kWh)', fontsize=12)
     ax.grid(True)
     ax.legend()
     ax.tick_params(axis='x', rotation=45)
     ax.tick_params(axis='both', which='major', labelsize=10)
 
 os.makedirs('results', exist_ok=True)
-fig.savefig('results/ev_loads_comparison.png', dpi=300, bbox_inches='tight')
+fig.savefig('results/ev_loads_consumption.png', dpi=300, bbox_inches='tight')
+
+plt.show()
+
+# Plot original vs masked data
+fig, axs = plt.subplots(len(home_ids), 1, figsize=(15, 5 * len(home_ids)), constrained_layout=True)
+fig.suptitle('Original vs Masked EV Load Data for Selected HomeIDs', fontsize=16)
+
+for i, homeid in enumerate(home_ids):
+    subset = data[data['dataid'] == homeid]
+    daily_sum = subset.groupby('date')[['car1', 'car2']].sum().reset_index()
+
+    ev_load = (daily_sum['car1'] + daily_sum['car2']) / 4.0  # 4 is to convert to kWh
+
+    # Split the data into training and testing sets
+    split_idx = int(0.8 * len(ev_load))
+    train_data = ev_load[:split_idx].values
+
+    # Train the model
+    model, masked_data = train_ssl_model(train_data, mask_percentage, epochs, batch_size, learning_rate)
+
+    # Plot original vs masked data
+    ax = axs[i]
+    ax.plot(daily_sum['date'][:split_idx], train_data, linestyle='-', color='b', linewidth=2, label='Original')
+    ax.plot(daily_sum['date'][:split_idx], masked_data.squeeze().numpy(), linestyle='--', color='g', linewidth=2, label='Masked')
+    ax.set_title(f'HomeID: {homeid} - Original vs Masked Data', fontsize=14)
+    ax.set_xlabel('Date', fontsize=12)
+    ax.set_ylabel('EV Load (kWh)', fontsize=12)
+    ax.grid(True)
+    ax.legend()
+    ax.tick_params(axis='x', rotation=45)
+    ax.tick_params(axis='both', which='major', labelsize=10)
+
+os.makedirs('results', exist_ok=True)
+fig.savefig('results/ev_loads_original_vs_masked.png', dpi=300, bbox_inches='tight')
 
 plt.show()
