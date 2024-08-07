@@ -1,6 +1,5 @@
 import torch
-import torchvision.transforms as transforms
-from torch import nn
+import torch.nn as nn
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -11,7 +10,7 @@ class SSLModel(nn.Module):
     def __init__(self):
         super(SSLModel, self).__init__()
         self.encoder = nn.Sequential(
-            nn.Linear(2, 128),
+            nn.Linear(1, 128),
             nn.ReLU(),
             nn.Linear(128, 64),
             nn.ReLU()
@@ -19,7 +18,7 @@ class SSLModel(nn.Module):
         self.projection_head = nn.Sequential(
             nn.Linear(64, 32),
             nn.ReLU(),
-            nn.Linear(32, 2)
+            nn.Linear(32, 1)
         )
     
     def forward(self, x):
@@ -43,85 +42,100 @@ data['date'] = data['local_15min'].dt.date
 # Select specific HomeIDs
 home_ids = [1222, 3000, 9053]
 
-# Prepare data for SSL
-ssl_data = []
-for homeid in home_ids:
-    subset = data[data['dataid'] == homeid]
-    daily_sum = subset.groupby('date')[['car1', 'car2']].sum().reset_index()
-    ssl_data.append(daily_sum[['car1', 'car2']].values)
-
-ssl_data = np.concatenate(ssl_data, axis=0)
-ssl_data = torch.tensor(ssl_data, dtype=torch.float32)
-
 # Define a percentage of data points to mask
-mask_percentage = 0.2
-num_mask = int(mask_percentage * ssl_data.size(0))
+mask_percentage = 0.9
 
-# Create masks
-mask = torch.randperm(ssl_data.size(0))[:num_mask]
-masked_data = ssl_data.clone()
-masked_data[mask] = 0  # Mask the selected data points
-
-# Create SSL Model instance
-model = SSLModel()
-
-# Define optimizer
-optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-
-# Training the SSL Model
-epochs = 100
+# Training parameters
+epochs = 5
 batch_size = 32
+learning_rate = 0.001
 
-for epoch in range(epochs):
-    perm = torch.randperm(ssl_data.size(0))
-    epoch_loss = 0
-    
-    for i in range(0, ssl_data.size(0), batch_size):
-        batch_indices = perm[i:i + batch_size]
-        batch_data = masked_data[batch_indices]
-        
-        optimizer.zero_grad()
-        
-        # Forward pass
-        output = model(batch_data)
-        
-        # SSL target
-        target = ssl_data[batch_indices]  # Target is the original unmasked data
-        
-        # Calculate MAE Loss
-        loss = mae_loss(output, target)
-        
-        # Backward pass and optimization
-        loss.backward()
-        optimizer.step()
-        
-        epoch_loss += loss.item()
-    
-    print(f'Epoch [{epoch+1}/{epochs}], Loss: {epoch_loss/((ssl_data.size(0)//batch_size)+1):.4f}')
+# Function to train the SSL model
+def train_ssl_model(train_data, mask_percentage, epochs, batch_size, learning_rate):
+    ssl_data = torch.tensor(train_data, dtype=torch.float32).unsqueeze(1)
 
-print('Training finished.')
+    num_mask = int(mask_percentage * ssl_data.size(0))
+    mask = torch.randperm(ssl_data.size(0))[:num_mask]
+    masked_data = ssl_data.clone()
+    masked_data[mask] = 0  # Mask the selected data points
 
-# Save the model
-os.makedirs('models', exist_ok=True)
-torch.save(model.state_dict(), 'models/ssl_model.pth')
+    model = SSLModel()
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
+    for epoch in range(epochs):
+        perm = torch.randperm(ssl_data.size(0))
+        epoch_loss = 0
+
+        for i in range(0, ssl_data.size(0), batch_size):
+            batch_indices = perm[i:i + batch_size]
+            batch_data = masked_data[batch_indices]
+
+            optimizer.zero_grad()
+
+            # Forward pass
+            output = model(batch_data)
+
+            # SSL target
+            target = ssl_data[batch_indices]  # Target is the original unmasked data
+
+            # Calculate MAE Loss
+            loss = mae_loss(output, target)
+            # print(np.mean(np.abs(target.detach().numpy() - output.detach().numpy())))
+
+            # Backward pass and optimization
+            loss.backward()
+            optimizer.step()
+
+            epoch_loss += loss.item()
+
+        print(f'Epoch [{epoch + 1}/{epochs}], Loss: {epoch_loss / ((ssl_data.size(0) // batch_size) + 1):.4f}')
+
+    print('Training finished.')
+    return model
 
 # Plot EV load and predicted values for each HomeID
-fig, axs = plt.subplots(len(home_ids), 1, figsize=(15, 5*len(home_ids)), constrained_layout=True)
+fig, axs = plt.subplots(len(home_ids), 2, figsize=(20, 5 * len(home_ids)), constrained_layout=True)
 fig.suptitle('Original and Predicted EV Load for Selected HomeIDs', fontsize=16)
 
 for i, homeid in enumerate(home_ids):
     subset = data[data['dataid'] == homeid]
     daily_sum = subset.groupby('date')[['car1', 'car2']].sum().reset_index()
+
+    ev_load = (daily_sum['car1'] + daily_sum['car2']) / 4.0 # 4 is to convert to kwh
+
+    # Split the data into training and testing sets
+    split_idx = int(0.8 * len(ev_load))
+    train_data = ev_load[:split_idx].values
+    test_data = ev_load[split_idx:].values
+    test_dates = daily_sum['date'][split_idx:]
+
+    # Train the model
+    model = train_ssl_model(train_data, mask_percentage, epochs, batch_size, learning_rate)
     
-    original_values = daily_sum[['car1', 'car2']].values
-    original_values = torch.tensor(original_values, dtype=torch.float32)
-    predicted_values = model(original_values).detach().numpy()
+    # Evaluate the model
+    all_data = torch.tensor(ev_load.values, dtype=torch.float32).unsqueeze(1)
+    predicted_values = model(all_data).detach().numpy()
     
-    ax = axs[i]
-    
-    ax.plot(daily_sum['date'], (original_values[:, 0] + original_values[:, 1]) / 4, linestyle='-', color='b', label='Original')
-    ax.plot(daily_sum['date'], (predicted_values[:, 0] + predicted_values[:, 1]) / 4, linestyle='--', color='r', label='Predicted')
-    ax.set_title(f'HomeID: {homeid}', fontsize=12)
+    test_data_tensor = torch.tensor(test_data, dtype=torch.float32).unsqueeze(1)
+    predicted_test_values = model(test_data_tensor).detach().numpy()
+
+    # Plot for the whole time series
+    ax = axs[i, 0]
+    ax.plot(daily_sum['date'], ev_load.values, linestyle='-', color='b', label='Original')
+    ax.plot(daily_sum['date'], predicted_values, linestyle='--', color='r', label='Predicted')
+    ax.set_title(f'HomeID: {homeid} - Whole Time Series', fontsize=12)
+    ax.set_xlabel('Date', fontsize=10)
+    ax.set_ylabel('EV Load (kWh)', fontsize=10)
+    ax.grid(True)
+    ax.legend()
+    ax.tick_params(axis='x', rotation=45)
+    ax.tick_params(axis='both', which='major', labelsize=10)
+
+    # Plot for the test data
+    ax = axs[i, 1]
+    ax.plot(test_dates, test_data, linestyle='-', color='b', label='Original')
+    ax.plot(test_dates, predicted_test_values, linestyle='--', color='r', label='Predicted')
+    ax.set_title(f'HomeID: {homeid} - Test Data', fontsize=12)
     ax.set_xlabel('Date', fontsize=10)
     ax.set_ylabel('EV Load (kWh)', fontsize=10)
     ax.grid(True)
