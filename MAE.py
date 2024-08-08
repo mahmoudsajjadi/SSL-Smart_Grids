@@ -170,9 +170,17 @@ for i, homeid in enumerate(home_ids):
     # Train the model
     model, masked_data = train_ssl_model(train_data, mask_percentage, epochs, batch_size, learning_rate)
 
-    # Predict on the test data
-    test_data_tensor = torch.tensor(test_data, dtype=torch.float32).unsqueeze(1) 
-    predicted_test_data = model(test_data_tensor).detach().numpy()
+    # Create a masked version of the test data
+    test_data_tensor = torch.tensor(test_data, dtype=torch.float32).unsqueeze(1)
+
+    num_mask_test = int(mask_percentage * test_data_tensor.size(0))
+    mask_test = torch.randperm(test_data_tensor.size(0))[:num_mask_test]
+    masked_test_data = test_data_tensor.clone()
+    masked_test_data[mask_test] = 0  # Mask the selected data points in the test data
+    
+    # predicted_test_data = model(test_data_tensor).detach().numpy()
+    predicted_test_data = model(masked_test_data).detach().numpy()
+
 
     # Plot training, testing, and original data
     ax = axs[i]
