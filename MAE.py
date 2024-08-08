@@ -43,7 +43,7 @@ data['date'] = data['local_15min'].dt.date
 home_ids = [1222, 3000, 9053]
 
 # Define a percentage of data points to mask
-mask_percentage = 0.9
+mask_percentage = 0.1
 
 # Training parameters
 epochs = 5
@@ -118,7 +118,7 @@ fig.savefig('results/ev_loads_consumption.png', dpi=300, bbox_inches='tight')
 
 plt.show()
 
-# Plot original vs masked data
+# Plot original vs masked data and predictions
 fig, axs = plt.subplots(len(home_ids), 1, figsize=(15, 5 * len(home_ids)), constrained_layout=True)
 fig.suptitle('Original vs Masked EV Load Data for Selected HomeIDs', fontsize=16)
 
@@ -149,5 +149,45 @@ for i, homeid in enumerate(home_ids):
 
 os.makedirs('results', exist_ok=True)
 fig.savefig('results/ev_loads_original_vs_masked.png', dpi=300, bbox_inches='tight')
+
+plt.show()
+
+# Plot training, testing, and original data with predictions
+fig, axs = plt.subplots(len(home_ids), 1, figsize=(15, 5 * len(home_ids)), constrained_layout=True)
+fig.suptitle('Training, Testing, and Original Data for Selected HomeIDs', fontsize=16)
+
+for i, homeid in enumerate(home_ids):
+    subset = data[data['dataid'] == homeid]
+    daily_sum = subset.groupby('date')[['car1', 'car2']].sum().reset_index()
+
+    ev_load = (daily_sum['car1'] + daily_sum['car2']) / 4.0  # 4 is to convert to kWh
+
+    # Split the data into training and testing sets
+    split_idx = int(0.8 * len(ev_load))
+    train_data = ev_load[:split_idx].values
+    test_data = ev_load[split_idx:].values
+
+    # Train the model
+    model, masked_data = train_ssl_model(train_data, mask_percentage, epochs, batch_size, learning_rate)
+
+    # Predict on the test data
+    test_data_tensor = torch.tensor(test_data, dtype=torch.float32).unsqueeze(1)
+    predicted_test_data = model(test_data_tensor).detach().numpy()
+
+    # Plot training, testing, and original data
+    ax = axs[i]
+    ax.plot(daily_sum['date'][:split_idx], train_data, linestyle='-', color='b', linewidth=2, label='Training Data')
+    ax.plot(daily_sum['date'][split_idx:], test_data, linestyle='--', color='r', linewidth=2, label='Testing Data')
+    ax.plot(daily_sum['date'][split_idx:], predicted_test_data, linestyle=':', color='green', linewidth=2, label='Predicted Test Data')
+    ax.set_title(f'HomeID: {homeid} - Training, Testing, and Original Data', fontsize=14)
+    ax.set_xlabel('Date', fontsize=12)
+    ax.set_ylabel('EV Load (kWh)', fontsize=12)
+    ax.grid(True)
+    ax.legend()
+    ax.tick_params(axis='x', rotation=45)
+    ax.tick_params(axis='both', which='major', labelsize=10)
+
+os.makedirs('results', exist_ok=True)
+fig.savefig('results/ev_loads_training_testing_original.png', dpi=300, bbox_inches='tight')
 
 plt.show()
