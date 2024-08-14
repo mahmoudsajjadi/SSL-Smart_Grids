@@ -43,7 +43,7 @@ data['date'] = data['local_15min'].dt.date
 home_ids = [1222, 3000, 9053]
 
 # Define a percentage of data points to mask
-mask_percentage = 0.8
+mask_percentage = 0.2
 
 # Training parameters
 epochs = 5
@@ -168,7 +168,7 @@ for i, homeid in enumerate(home_ids):
     test_data = ev_load[split_idx:].values
 
     # Train the model
-    model, masked_data = train_ssl_model(train_data, mask_percentage, epochs, batch_size, learning_rate)
+    model, masked_data = train_ssl_model(train_data, mask_percentage, epochs, batch_size, learning_rate) 
 
     # Create a masked version of the test data
     test_data_tensor = torch.tensor(test_data, dtype=torch.float32).unsqueeze(1)
